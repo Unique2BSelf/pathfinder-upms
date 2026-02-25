@@ -1,4 +1,5 @@
 import { redirect, notFound } from "next/navigation";
+import PhotoUpload from "@/components/PhotoUpload";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -105,7 +106,7 @@ export default async function MemberDetailPage({
       <div className="card p-6">
         <div className="flex items-start gap-5">
           {/* Avatar */}
-          <div className="w-16 h-16 rounded-2xl bg-amber-500/20 border border-amber-500/40
+          <div className="w-16 h-16 rounded-2xl overflow-hidden bg-slate-700
                           flex items-center justify-center text-amber-400 font-bold text-2xl flex-shrink-0">
             {member.first_name[0]?.toUpperCase()}
           </div>
