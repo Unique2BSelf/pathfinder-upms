@@ -1,0 +1,1 @@
+alter table households add column if not exists emergency_contact_name text; alter table households add column if not exists emergency_contact_phone text; alter table households add column if not exists emergency_contact_rel text;
