@@ -2,9 +2,15 @@
 
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { Users, AlertTriangle, Download, Search, Filter } from "lucide-react";
+import { Users, AlertTriangle, Download, Search, Trash2, X } from "lucide-react";
 
-interface Member {
+interface Household {
+  family_name: string;
+  city: string;
+  state: string;
+}
+
+interface YouthMember {
   id: string;
   first_name: string;
   last_name: string;
@@ -14,17 +20,30 @@ interface Member {
   medications: string;
   medical_alert_flag: boolean;
   physical_expiration: string;
-  household: {
-    family_name: string;
-    city: string;
-    state: string;
-  };
-  enrollments: {
-    program: {
-      name: string;
-      slug: string;
-    };
-  }[];
+  household_id: string;
+  household?: Household | Household[];
+  enrollments?: { program: { name: string; slug: string } }[];
+  type: "youth";
+}
+
+interface AdultMember {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string;
+  role: string;
+  household_id: string;
+  household?: Household | Household[];
+  type: "adult";
+}
+
+type Member = YouthMember | AdultMember;
+
+function getHousehold(h: Household | Household[] | undefined): Household | undefined {
+  if (!h) return undefined;
+  if (Array.isArray(h)) return h[0];
+  return h;
 }
 
 export default function AdminRosterPage() {
@@ -34,6 +53,8 @@ export default function AdminRosterPage() {
   const [search, setSearch] = useState("");
   const [showAlertsOnly, setShowAlertsOnly] = useState(false);
   const [userRole, setUserRole] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [removeConfirm, setRemoveConfirm] = useState<{ id: string; name: string; type: string } | null>(null);
 
   useEffect(() => {
     async function loadData() {
@@ -52,21 +73,28 @@ export default function AdminRosterPage() {
       }
       setUserRole(userData.role);
 
-      const { data: membersData } = await supabase
+      const { data: youthData } = await supabase
         .from("youth_members")
         .select(`
           id, first_name, last_name, dob, grade,
-          known_allergies, medications, medical_alert_flag, physical_expiration,
+          known_allergies, medications, medical_alert_flag, physical_expiration, household_id,
           household:households(id, family_name, city, state),
-          enrollments(
-:programs(id,            program name, slug)
-          )
+          enrollments(program:programs(name, slug))
         `)
         .order("last_name");
 
-      if (membersData) {
-        setMembers(membersData as any);
-      }
+      const { data: adultData } = await supabase
+        .from("users")
+        .select(`
+          id, first_name, last_name, email, phone, role, household_id,
+          household:households(id, family_name, city, state)
+        `)
+        .order("last_name");
+
+      const youth: Member[] = (youthData || []).map((y: any) => ({ ...y, type: "youth" as const }));
+      const adults: Member[] = (adultData || []).map((a: any) => ({ ...a, type: "adult" as const }));
+
+      setMembers([...youth, ...adults]);
       setLoading(false);
     }
 
@@ -78,25 +106,48 @@ export default function AdminRosterPage() {
       !search ||
       m.first_name.toLowerCase().includes(search.toLowerCase()) ||
       m.last_name.toLowerCase().includes(search.toLowerCase()) ||
-      m.household?.family_name?.toLowerCase().includes(search.toLowerCase());
+      getHousehold(m.household)?.family_name?.toLowerCase().includes(search.toLowerCase());
 
-    const matchesAlerts = !showAlertsOnly || m.medical_alert_flag;
+    const matchesAlerts = !showAlertsOnly || 
+      (m.type === "youth" && (m as YouthMember).medical_alert_flag);
+    
     return matchesSearch && matchesAlerts;
   });
 
+  const handleRemove = async () => {
+    if (!removeConfirm) return;
+    
+    const { type, id } = removeConfirm;
+    setRemovingId(id);
+    
+    if (type === "youth") {
+      await supabase.from("youth_members").delete().eq("id", id);
+    } else {
+      await supabase.from("users").delete().eq("id", id);
+    }
+    
+    setMembers(members.filter(m => m.id !== id));
+    setRemoveConfirm(null);
+    setRemovingId(null);
+  };
+
   const exportCSV = () => {
-    const headers = ["Name", "Grade", "Family", "City", "State", "Allergies", "Meds", "Alert", "Physical Exp"];
-    const rows = filtered.map((m) => [
-      `${m.first_name} ${m.last_name}`,
-      m.grade || "",
-      m.household?.family_name || "",
-      m.household?.city || "",
-      m.household?.state || "",
-      m.known_allergies || "",
-      m.medications || "",
-      m.medical_alert_flag ? "YES" : "",
-      m.physical_expiration || "",
-    ]);
+    const headers = ["Name", "Type", "Grade", "Family", "City", "State", "Allergies", "Meds", "Alert", "Physical Exp"];
+    const rows = filtered.map((m) => {
+      const hh = getHousehold(m.household);
+      return [
+        `${m.first_name} ${m.last_name}`,
+        m.type,
+        m.type === "youth" ? (m as YouthMember).grade?.toString() || "" : (m as AdultMember).role || "",
+        hh?.family_name || "",
+        hh?.city || "",
+        hh?.state || "",
+        m.type === "youth" ? (m as YouthMember).known_allergies || "" : "",
+        m.type === "youth" ? (m as YouthMember).medications || "" : "",
+        m.type === "youth" && (m as YouthMember).medical_alert_flag ? "YES" : "",
+        m.type === "youth" ? (m as YouthMember).physical_expiration || "" : "",
+      ];
+    });
 
     const csv = [headers, ...rows].map((r) => r.join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
@@ -107,32 +158,54 @@ export default function AdminRosterPage() {
     a.click();
   };
 
-  if (loading) {
-    return <div className="p-8 text-center text-slate-400">Loading roster...</div>;
-  }
-
+  if (loading) return <div className="p-8 text-center text-slate-400">Loading roster...</div>;
   if (!["admin", "superadmin", "leader"].includes(userRole || "")) {
-    return (
-      <div className="p-8 text-center text-red-400">
-        Admin access required
-      </div>
-    );
+    return <div className="p-8 text-center text-red-400">Admin access required</div>;
   }
 
   return (
     <div className="space-y-6">
+      {removeConfirm && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-800 rounded-xl p-6 max-w-md w-full mx-4">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-600/20 rounded-full flex items-center justify-center">
+                <AlertTriangle className="w-5 h-5 text-red-400" />
+              </div>
+              <h3 className="text-lg font-bold text-white">Remove {removeConfirm.type === "youth" ? "Youth" : "Adult"}?</h3>
+            </div>
+            <p className="text-slate-300 mb-6">
+              Are you sure you want to remove <strong>{removeConfirm.name}</strong>? 
+              This action cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setRemoveConfirm(null)}
+                className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRemove}
+                disabled={removingId === removeConfirm.id}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-500 disabled:opacity-50"
+              >
+                {removingId === removeConfirm.id ? "Removing..." : "Yes, Remove"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Global Roster</h1>
           <p className="text-slate-400 text-sm">
-            {filtered.length} members
+            {filtered.length} members ({members.filter(m => m.type === "youth").length} youth, {members.filter(m => m.type === "adult").length} adults)
             {showAlertsOnly && " with alerts"}
           </p>
         </div>
-        <button
-          onClick={exportCSV}
-          className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 flex items-center gap-2"
-        >
+        <button onClick={exportCSV} className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 flex items-center gap-2">
           <Download className="w-4 h-4" /> Export CSV
         </button>
       </div>
@@ -151,9 +224,7 @@ export default function AdminRosterPage() {
         <button
           onClick={() => setShowAlertsOnly(!showAlertsOnly)}
           className={`px-4 py-2 rounded-lg flex items-center gap-2 ${
-            showAlertsOnly
-              ? "bg-red-600 text-white"
-              : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+            showAlertsOnly ? "bg-red-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
           }`}
         >
           <AlertTriangle className="w-4 h-4" /> Alerts Only
@@ -165,76 +236,80 @@ export default function AdminRosterPage() {
           <thead className="bg-slate-700">
             <tr>
               <th className="px-4 py-3 text-left text-sm font-semibold text-slate-300">Name</th>
-              <th className="px-4 py-3 text-left text-sm font-semibold text-slate-300">Grade</th>
+              <th className="px-4 py-3 text-left text-sm font-semibold text-slate-300">Type</th>
               <th className="px-4 py-3 text-left text-sm font-semibold text-slate-300">Family</th>
-              <th className="px-4 py-3 text-left text-sm font-semibold text-slate-300">Programs</th>
-              <th className="px-4 py-3 text-left text-sm font-semibold text-slate-300">Medical Alert</th>
-              <th className="px-4 py-3 text-left text-sm font-semibold text-slate-300">Physical</th>
+              <th className="px-4 py-3 text-left text-sm font-semibold text-slate-300">Programs/Role</th>
+              <th className="px-4 py-3 text-left text-sm font-semibold text-slate-300">Medical</th>
+              <th className="px-4 py-3 text-right text-sm font-semibold text-slate-300">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-700">
-            {filtered.map((member) => (
-              <tr key={member.id} className="hover:bg-slate-750">
-                <td className="px-4 py-3">
-                  <div className="text-white font-medium">
-                    {member.first_name} {member.last_name}
-                  </div>
-                  <div className="text-xs text-slate-500">
-                    DOB: {member.dob}
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-slate-300">
-                  {member.grade !== null ? `Grade ${member.grade}` : "—"}
-                </td>
-                <td className="px-4 py-3">
-                  <div className="text-slate-300">{member.household?.family_name}</div>
-                  <div className="text-xs text-slate-500">
-                    {member.household?.city}, {member.household?.state}
-                  </div>
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex flex-wrap gap-1">
-                    {member.enrollments?.map((e, i) => (
-                      <span
-                        key={i}
-                        className="px-2 py-0.5 bg-slate-700 text-slate-300 text-xs rounded"
-                      >
-                        {e.program?.name}
-                      </span>
-                    )) || <span className="text-slate-500 text-sm">—</span>}
-                  </div>
-                </td>
-                <td className="px-4 py-3">
-                  {member.medical_alert_flag ? (
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 text-red-400" />
-                      <span className="text-red-400 text-sm">
-                        {member.known_allergies || member.medications || "Alert"}
-                      </span>
+            {filtered.map((member) => {
+              const hh = getHousehold(member.household);
+              return (
+                <tr key={member.id} className="hover:bg-slate-750">
+                  <td className="px-4 py-3">
+                    <div className="text-white font-medium">
+                      {member.first_name} {member.last_name}
                     </div>
-                  ) : (
-                    <span className="text-slate-500">—</span>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  {member.physical_expiration ? (
-                    <span
-                      className={`text-sm ${
-                        new Date(member.physical_expiration) < new Date()
-                          ? "text-red-400"
-                          : new Date(member.physical_expiration) < new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
-                          ? "text-yellow-400"
-                          : "text-slate-300"
-                      }`}
-                    >
-                      {new Date(member.physical_expiration).toLocaleDateString()}
+                    {member.type === "youth" && (
+                      <div className="text-xs text-slate-500">DOB: {(member as YouthMember).dob}</div>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`px-2 py-1 rounded text-xs ${
+                      member.type === "youth" ? "bg-amber-600/20 text-amber-400" : "bg-blue-600/20 text-blue-400"
+                    }`}>
+                      {member.type === "youth" ? "Youth" : "Adult"}
                     </span>
-                  ) : (
-                    <span className="text-red-400 text-sm">Missing</span>
-                  )}
-                </td>
-              </tr>
-            ))}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="text-slate-300">{hh?.family_name}</div>
+                    <div className="text-xs text-slate-500">
+                      {hh?.city}, {hh?.state}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    {member.type === "youth" ? (
+                      <div className="flex flex-wrap gap-1">
+                        {(member as YouthMember).enrollments?.map((e, i) => (
+                          <span key={i} className="px-2 py-0.5 bg-slate-700 text-slate-300 text-xs rounded">
+                            {e.program?.name}
+                          </span>
+                        )) || <span className="text-slate-500 text-sm">—</span>}
+                      </div>
+                    ) : (
+                      <span className="text-slate-300">{(member as AdultMember).role}</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {member.type === "youth" ? (
+                      (member as YouthMember).medical_alert_flag ? (
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4 text-red-400" />
+                          <span className="text-red-400 text-sm">
+                            {(member as YouthMember).known_allergies || (member as YouthMember).medications || "Alert"}
+                          </span>
+                        </div>
+                      ) : <span className="text-slate-500">—</span>
+                    ) : <span className="text-slate-500">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <button
+                      onClick={() => setRemoveConfirm({ 
+                        id: member.id, 
+                        name: `${member.first_name} ${member.last_name}`,
+                        type: member.type 
+                      })}
+                      className="p-2 hover:bg-red-600/20 rounded text-red-400"
+                      title="Remove from household"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
