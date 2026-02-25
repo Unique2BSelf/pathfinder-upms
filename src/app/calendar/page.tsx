@@ -145,7 +145,7 @@ function CalendarView() {
       .lte("starts_at", end)
       .order("starts_at", { ascending: true });
 
-    if (!error && data) setEvents(data as CalendarEvent[]);
+    if (!error && data) setEvents(data as unknown as CalendarEvent[]);
     setLoading(false);
   }, [currentMonth, currentYear, supabase]);
 
