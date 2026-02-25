@@ -36,7 +36,7 @@ export default async function AdminAlertsPage() {
 
   return (
     <AdminAlertsClient
-      initialAlerts={alerts ?? []}
+      initialAlerts={(alerts ?? []).map((a: any) => ({ ...a, household: a.household?.[0], youth: a.youth?.[0] }))}
       unreadCount={unreadCount}
     />
   );

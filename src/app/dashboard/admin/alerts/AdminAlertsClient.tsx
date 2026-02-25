@@ -152,7 +152,7 @@ export default function AdminAlertsClient({
       .order("created_at", { ascending: false })
       .limit(100);
 
-    if (data) setAlerts(data as Alert[]);
+    if (data) { const formatted = data.map((a: any) => ({ ...a, household: a.household?.[0], youth: a.youth?.[0] })); setAlerts(formatted as Alert[]); }
     setLoading(false);
   }
 
