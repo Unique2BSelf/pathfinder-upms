@@ -1,5 +1,6 @@
 import { redirect, notFound } from "next/navigation";
 import PhotoUpload from "@/components/PhotoUpload";
+import StaffNotes from "@/components/StaffNotes";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -54,7 +55,7 @@ export default async function MemberDetailPage({
     .select(`
       id, first_name, last_name, preferred_name, dob, gender, grade,
       school_name, shirt_size, known_allergies, medications,
-      medical_alert_flag, physical_expiration, household_id,
+      medical_alert_flag, physical_expiration, internal_notes, household_id,
       enrollments(
         id, status, join_date,
         program:programs(id, slug, name, short_name)
@@ -327,6 +328,7 @@ export default async function MemberDetailPage({
           </div>
         )}
       </div>
+    {isAdmin && <StaffNotes youthId={member.id} initialNotes={member.internal_notes} isAdmin={isAdmin} />}
     </div>
   );
 }
