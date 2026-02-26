@@ -108,6 +108,11 @@ export default async function DashboardLayout({
                 icon={Shield}
                 label="Waivers"
               />
+              <SidebarLink
+                href="/dashboard/admin/settings"
+                icon={Settings}
+                label="Settings"
+              />
             </>
           )}
         </nav>
