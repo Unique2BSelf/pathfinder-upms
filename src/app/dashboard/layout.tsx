@@ -83,6 +83,31 @@ export default async function DashboardLayout({
                 icon={Users}
                 label="Global Roster"
               />
+              <SidebarLink
+                href="/dashboard/admin/events"
+                icon={Calendar}
+                label="Events"
+              />
+              <SidebarLink
+                href="/dashboard/admin/registration"
+                icon={FileText}
+                label="Registration"
+              />
+              <SidebarLink
+                href="/dashboard/admin/financials"
+                icon={DollarSign}
+                label="Financials"
+              />
+              <SidebarLink
+                href="/dashboard/admin/crm"
+                icon={LayoutDashboard}
+                label="CRM"
+              />
+              <SidebarLink
+                href="/dashboard/admin/waivers"
+                icon={Shield}
+                label="Waivers"
+              />
             </>
           )}
         </nav>
