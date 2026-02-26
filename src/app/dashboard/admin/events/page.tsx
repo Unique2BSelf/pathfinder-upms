@@ -1,14 +1,18 @@
 "use client";
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { Plus, Edit, Trash2, X, AlertTriangle } from "lucide-react";
+import { Plus, Edit, Trash2, X, AlertTriangle, List, Calendar as CalendarIcon } from "lucide-react";
 import Link from "next/link";
+import CalendarView from "@/components/CalendarView";
+
+const EVENT_TYPES = ["meeting", "campout", "service", "fundraiser", "competition", "ceremony", "trip", "other"];
 
 export default function EventsPage() {
   const supabase = createClient();
   const [events, setEvents] = useState<any[]>([]);
   const [programs, setPrograms] = useState<any[]>([]);
   const [filter, setFilter] = useState("all");
+  const [view, setView] = useState<"list" | "calendar">("list");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<any>({});
   const [deleteConfirm, setDeleteConfirm] = useState<any>(null);
@@ -43,7 +47,7 @@ export default function EventsPage() {
 
   const saveEdit = async () => {
     setSaving(true);
-    const { error } = await supabase.from("events").update({
+    await supabase.from("events").update({
       title: editForm.title,
       description: editForm.description,
       event_type: editForm.event_type,
@@ -55,10 +59,8 @@ export default function EventsPage() {
       rsvp_enabled: editForm.rsvp_enabled,
     }).eq("id", editingId);
 
-    if (!error) {
-      const { data } = await supabase.from("events").select("*, program:programs(id, name, slug)").order("starts_at");
-      setEvents(data || []);
-    }
+    const { data } = await supabase.from("events").select("*, program:programs(id, name, slug)").order("starts_at");
+    setEvents(data || []);
     setEditingId(null);
     setSaving(false);
   };
@@ -68,6 +70,10 @@ export default function EventsPage() {
     await supabase.from("events").delete().eq("id", deleteConfirm.id);
     setEvents(events.filter(e => e.id !== deleteConfirm.id));
     setDeleteConfirm(null);
+  };
+
+  const handleEventClick = (event: any) => {
+    startEdit(event);
   };
 
   return (
@@ -93,6 +99,7 @@ export default function EventsPage() {
         </div>
       )}
 
+      {/* Header */}
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-white">Events</h1>
         <Link href="/dashboard/admin/events/new" className="px-4 py-2 bg-forest-600 text-white rounded-lg flex items-center gap-2">
@@ -100,48 +107,80 @@ export default function EventsPage() {
         </Link>
       </div>
 
-      <select value={filter} onChange={e => setFilter(e.target.value)} className="px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white">
-        <option value="all">All Programs</option>
-        {programs.map(p => <option key={p.id} value={p.slug}>{p.name}</option>)}
-      </select>
-
-      <div className="bg-slate-800 rounded-xl overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-slate-700">
-            <tr>
-              <th className="px-4 py-3 text-left">Event</th>
-              <th className="px-4 py-3 text-left">Program</th>
-              <th className="px-4 py-3 text-left">Date/Time</th>
-              <th className="px-4 py-3 text-left">Location</th>
-              <th className="px-4 py-3 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-700">
-            {filtered.map(e => (
-              <tr key={e.id} className="hover:bg-slate-750">
-                <td className="px-4 py-3">
-                  <div className="text-white font-medium">{e.title}</div>
-                  <div className="text-xs text-slate-500">{e.event_type}</div>
-                </td>
-                <td className="px-4 py-3 text-slate-400">{e.program?.name || "All"}</td>
-                <td className="px-4 py-3 text-slate-400">
-                  <div>{new Date(e.starts_at).toLocaleDateString()}</div>
-                  <div className="text-xs">{new Date(e.starts_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</div>
-                </td>
-                <td className="px-4 py-3 text-slate-400">{e.location || "—"}</td>
-                <td className="px-4 py-3 text-right">
-                  <button onClick={() => startEdit(e)} className="p-2 hover:bg-slate-600 rounded text-blue-400">
-                    <Edit className="w-4 h-4" />
-                  </button>
-                  <button onClick={() => setDeleteConfirm({id: e.id, title: e.title})} className="p-2 hover:bg-slate-600 rounded text-red-400 ml-2">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {/* Filters and View Toggle */}
+      <div className="flex flex-wrap gap-4 items-center justify-between">
+        <div className="flex gap-4 items-center">
+          <select value={filter} onChange={e => setFilter(e.target.value)} className="px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white">
+            <option value="all">All Programs</option>
+            {programs.map(p => <option key={p.id} value={p.slug}>{p.name}</option>)}
+          </select>
+        </div>
+        
+        <div className="flex bg-slate-800 rounded-lg p-1">
+          <button
+            onClick={() => setView("list")}
+            className={`px-4 py-2 rounded-lg flex items-center gap-2 text-sm ${
+              view === "list" ? "bg-forest-600 text-white" : "text-slate-400 hover:text-white"
+            }`}
+          >
+            <List className="w-4 h-4" /> List
+          </button>
+          <button
+            onClick={() => setView("calendar")}
+            className={`px-4 py-2 rounded-lg flex items-center gap-2 text-sm ${
+              view === "calendar" ? "bg-forest-600 text-white" : "text-slate-400 hover:text-white"
+            }`}
+          >
+            <CalendarIcon className="w-4 h-4" /> Calendar
+          </button>
+        </div>
       </div>
+
+      {/* List View */}
+      {view === "list" && (
+        <div className="bg-slate-800 rounded-xl overflow-hidden">
+          <table className="w-full">
+            <thead className="bg-slate-700">
+              <tr>
+                <th className="px-4 py-3 text-left">Event</th>
+                <th className="px-4 py-3 text-left">Program</th>
+                <th className="px-4 py-3 text-left">Date/Time</th>
+                <th className="px-4 py-3 text-left">Location</th>
+                <th className="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-700">
+              {filtered.map(e => (
+                <tr key={e.id} className="hover:bg-slate-750">
+                  <td className="px-4 py-3">
+                    <div className="text-white font-medium">{e.title}</div>
+                    <div className="text-xs text-slate-500">{e.event_type}</div>
+                  </td>
+                  <td className="px-4 py-3 text-slate-400">{e.program?.name || "All"}</td>
+                  <td className="px-4 py-3 text-slate-400">
+                    <div>{new Date(e.starts_at).toLocaleDateString()}</div>
+                    <div className="text-xs">{new Date(e.starts_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</div>
+                  </td>
+                  <td className="px-4 py-3 text-slate-400">{e.location || "—"}</td>
+                  <td className="px-4 py-3 text-right">
+                    <button onClick={() => startEdit(e)} className="p-2 hover:bg-slate-600 rounded text-blue-400">
+                      <Edit className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => setDeleteConfirm({id: e.id, title: e.title})} className="p-2 hover:bg-slate-600 rounded text-red-400 ml-2">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Calendar View */}
+      {view === "calendar" && (
+        <CalendarView events={filtered} onEventClick={handleEventClick} />
+      )}
 
       {/* Edit Modal */}
       {editingId && (
@@ -169,14 +208,7 @@ export default function EventsPage() {
                   <label className="block text-sm text-slate-300 mb-1">Type</label>
                   <select value={editForm.event_type} onChange={e => setEditForm({...editForm, event_type: e.target.value})}
                     className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white">
-                    <option value="meeting">Meeting</option>
-                    <option value="campout">Campout</option>
-                    <option value="service">Service</option>
-                    <option value="fundraiser">Fundraiser</option>
-                    <option value="competition">Competition</option>
-                    <option value="ceremony">Ceremony</option>
-                    <option value="trip">Trip</option>
-                    <option value="other">Other</option>
+                    {EVENT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </div>
                 <div>
