@@ -3,7 +3,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import {
   LayoutDashboard, Users, FileText, Settings,
-  Mountain, LogOut, Bell
+  Mountain, LogOut, Bell, Calendar, DollarSign, Shield
 } from "lucide-react";
 
 const NAV = [
