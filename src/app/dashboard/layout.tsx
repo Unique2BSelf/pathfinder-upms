@@ -3,7 +3,8 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import {
   LayoutDashboard, Users, FileText, Settings,
-  Mountain, LogOut, CreditCard, Bell, Calendar, DollarSign, Shield
+  Mountain, LogOut, CreditCard, Bell, Calendar, DollarSign, Shield,
+  TrendingUp
 } from "lucide-react";
 
 const NAV = [
@@ -107,6 +108,11 @@ export default async function DashboardLayout({
                 href="/dashboard/admin/waivers"
                 icon={Shield}
                 label="Waivers"
+              />
+              <SidebarLink
+                href="/dashboard/admin/advancement"
+                icon={TrendingUp}
+                label="Advancement"
               />
               <SidebarLink
                 href="/dashboard/admin/settings"
