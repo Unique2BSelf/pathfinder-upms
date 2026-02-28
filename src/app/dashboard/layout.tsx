@@ -115,6 +115,11 @@ export default async function DashboardLayout({
                 label="Advancement"
               />
               <SidebarLink
+                href="/dashboard/admin/units"
+                icon={Users}
+                label="Units"
+              />
+              <SidebarLink
                 href="/dashboard/admin/settings"
                 icon={Settings}
                 label="Settings"
