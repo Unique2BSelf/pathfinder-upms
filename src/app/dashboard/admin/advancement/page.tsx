@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { Check, AlertCircle, Users, ChevronDown, Loader2 } from "lucide-react";
+import { Check, AlertCircle, Users, ChevronDown, Loader2, Trophy } from "lucide-react";
 
 interface Rank {
   id: string;
@@ -22,6 +22,7 @@ interface YouthMember {
   id: string;
   first_name: string;
   last_name: string;
+  preferred_name?: string;
   patrol_id?: string;
 }
 
@@ -48,25 +49,27 @@ export default function AdvancementGridPage() {
   const [youth, setYouth] = useState<YouthMember[]>([]);
   const [progress, setProgress] = useState<Record<string, Record<string, string>>>({});
   const [selectedScouts, setSelectedScouts] = useState<Set<string>>(new Set());
-  const [saving, setSaving] = useState(false);
   const [savingRequirement, setSavingRequirement] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ show: boolean; message: string; type: 'success' | 'error' }>({ show: false, message: '', type: 'success' });
 
-  // Load patrols
   useEffect(() => {
     loadPatrols();
   }, []);
 
-  // Load ranks when program changes
   useEffect(() => {
     loadRanks();
   }, [selectedProgram]);
 
-  // Load requirements and youth when rank/patrol selected
   useEffect(() => {
     if (selectedRank && selectedPatrol) {
       loadData();
     }
   }, [selectedRank, selectedPatrol]);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ show: true, message, type });
+    setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 4000);
+  };
 
   const loadPatrols = async () => {
     const { data } = await supabase
@@ -97,7 +100,6 @@ export default function AdvancementGridPage() {
     if (!selectedRank) return;
     setLoading(true);
 
-    // Get requirements for selected rank
     const { data: reqs } = await supabase
       .from("advancement_catalog")
       .select("id, name, description, display_order")
@@ -105,12 +107,11 @@ export default function AdvancementGridPage() {
       .order("display_order");
     if (reqs) setRequirements(reqs);
 
-    // Get youth in selected patrol
     const { data: assignments } = await supabase
       .from("patrol_assignments")
       .select(`
         youth_member_id,
-        youth_members(id, first_name, last_name)
+        youth_members(id, first_name, last_name, preferred_name)
       `)
       .eq("patrol_id", selectedPatrol);
 
@@ -118,7 +119,6 @@ export default function AdvancementGridPage() {
       const youthData = assignments.map((a: any) => a.youth_members);
       setYouth(youthData);
 
-      // Get progress for all youth
       const youthIds = youthData.map((y: any) => y.id);
       if (youthIds.length > 0) {
         const { data: progressData } = await supabase
@@ -127,7 +127,6 @@ export default function AdvancementGridPage() {
           .in("youth_member_id", youthIds)
           .in("requirement_id", reqs?.map((r) => r.id) || []);
 
-        // Organize progress by youth -> requirement
         const progressMap: Record<string, Record<string, string>> = {};
         progressData?.forEach((p) => {
           if (!progressMap[p.youth_member_id]) {
@@ -155,7 +154,7 @@ export default function AdvancementGridPage() {
     if (selectedScouts.size === youth.length) {
       setSelectedScouts(new Set());
     } else {
-      setSelectedScouts(new Set(youth.map((y) => y.id)));
+      setSelectedScouts(new Set(youth.map((y: any) => y.id)));
     }
   };
 
@@ -177,6 +176,20 @@ export default function AdvancementGridPage() {
     if (!error) {
       // Refresh progress
       await loadData();
+      
+      // Check if any scout just completed their rank
+      for (const scoutId of Array.from(selectedScouts)) {
+        const { data: result } = await supabase.rpc('check_rank_completion', {
+          p_youth_id: scoutId,
+          p_rank_id: selectedRank?.id
+        });
+        
+        if (result && result[0]?.is_complete) {
+          const scout = youth.find((y: any) => y.id === scoutId);
+          const name = scout?.preferred_name || scout?.first_name || 'Scout';
+          showToast(`🎉 ${name} has completed ${selectedRank?.name}!`, 'success');
+        }
+      }
     }
     setSavingRequirement(null);
   };
@@ -189,6 +202,13 @@ export default function AdvancementGridPage() {
     );
   };
 
+  const getCompletionCount = (scoutId: string): number => {
+    const scoutProgress = progress[scoutId] || {};
+    return requirements.filter((req) => 
+      scoutProgress[req.id] === "verified" || scoutProgress[req.id] === "awarded"
+    ).length;
+  };
+
   if (loading && ranks.length > 0) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -199,6 +219,16 @@ export default function AdvancementGridPage() {
 
   return (
     <div className="p-6">
+      {/* Toast Notification */}
+      {toast.show && (
+        <div className={`fixed top-4 right-4 z-50 px-6 py-3 rounded-lg shadow-lg flex items-center gap-2 ${
+          toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'
+        } text-white`}>
+          {toast.type === 'success' ? <Trophy className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
+          {toast.message}
+        </div>
+      )}
+
       <div className="flex items-center gap-3 mb-6">
         <div className="w-12 h-12 bg-emerald-100 rounded-xl flex items-center justify-center">
           <Users className="w-6 h-6 text-emerald-600" />
@@ -211,7 +241,6 @@ export default function AdvancementGridPage() {
 
       {/* Controls */}
       <div className="flex flex-wrap gap-4 mb-6">
-        {/* Program Selector */}
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Program</label>
           <select
@@ -224,7 +253,6 @@ export default function AdvancementGridPage() {
           </select>
         </div>
 
-        {/* Patrol Selector */}
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Patrol / Den</label>
           <select
@@ -243,7 +271,6 @@ export default function AdvancementGridPage() {
           </select>
         </div>
 
-        {/* Rank Selector */}
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Rank</label>
           <select
@@ -290,12 +317,12 @@ export default function AdvancementGridPage() {
                     </th>
                   ))}
                   <th className="px-4 py-3 text-center text-sm font-semibold text-slate-700">
-                    Actions
+                    Progress
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {youth.map((y) => {
+                {youth.map((y: any) => {
                   const isComplete = checkRankComplete(y.id);
                   const scoutProgress = progress[y.id] || {};
                   return (
@@ -316,7 +343,7 @@ export default function AdvancementGridPage() {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <span className="font-medium text-slate-800">
-                            {y.first_name} {y.last_name}
+                            {y.preferred_name || y.first_name} {y.last_name}
                           </span>
                           {isComplete && (
                             <Check className="w-4 h-4 text-green-600" />
@@ -348,12 +375,9 @@ export default function AdvancementGridPage() {
                           </td>
                         );
                       })}
-                      <td className="px-4 py-3">
-                        <span className="text-xs text-slate-500">
-                          {Object.values(scoutProgress).filter(
-                            (s) => s === "verified" || s === "awarded"
-                          ).length}
-                          /{requirements.length}
+                      <td className="px-4 py-3 text-center">
+                        <span className="text-sm font-medium">
+                          {getCompletionCount(y.id)}/{requirements.length}
                         </span>
                       </td>
                     </tr>
@@ -363,17 +387,15 @@ export default function AdvancementGridPage() {
             </table>
           </div>
 
-          {/* Empty state */}
           {youth.length === 0 && (
             <div className="p-8 text-center">
               <AlertCircle className="w-8 h-8 text-slate-400 mx-auto mb-2" />
               <p className="text-slate-500">
-                No scouts in this patrol. Add scouts to a patrol first.
+                No scouts in this patrol. Add scouts to a unit first.
               </p>
             </div>
           )}
 
-          {/* Mobile note */}
           <div className="px-4 py-2 bg-slate-50 border-t border-slate-200 text-xs text-slate-500 md:hidden">
             Scroll horizontally to see all requirements
           </div>
