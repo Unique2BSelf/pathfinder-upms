@@ -3,8 +3,8 @@
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { 
-  Users, Plus, Trash2, UserPlus, Crown, 
-  ArrowRight, Loader2, Search, X 
+  Users, Plus, Trash2, ArrowRight, ArrowLeft, 
+  Crown, Loader2, Search, X, ChevronRight 
 } from "lucide-react";
 
 interface Patrol {
@@ -19,7 +19,6 @@ interface YouthMember {
   id: string;
   first_name: string;
   last_name: string;
-  patrol_id?: string | null;
 }
 
 interface Assignment {
@@ -35,8 +34,6 @@ const LEADERSHIP_ROLES = [
   { value: "assistant", label: "Assistant PL" },
   { value: "scribe", label: "Scribe" },
   { value: "quartermaster", label: "Quartermaster" },
-  { value: "chorister", label: "Chorister" },
-  { value: "historian", label: "Historian" },
   { value: "member", label: "Member" },
 ];
 
@@ -48,10 +45,10 @@ export default function UnitsPage() {
   const [selectedPatrol, setSelectedPatrol] = useState<Patrol | null>(null);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [showAssignModal, setShowAssignModal] = useState(false);
   const [newPatrol, setNewPatrol] = useState({ name: "", program: "boy" as "cub" | "boy" });
   const [saving, setSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [movingYouth, setMovingYouth] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     loadData();
@@ -76,7 +73,7 @@ export default function UnitsPage() {
     // Load all youth members
     const { data: youthData } = await supabase
       .from("youth_members")
-      .select("id, first_name, last_name, household_id")
+      .select("id, first_name, last_name")
       .order("last_name");
     if (youthData) setAllYouth(youthData as any);
 
@@ -93,7 +90,7 @@ export default function UnitsPage() {
         youth_member_id,
         patrol_id,
         role,
-        youth_members(id, first_name, last_name, patrol_id)
+        youth_members(id, first_name, last_name)
       `)
       .eq("patrol_id", selectedPatrol.id);
 
@@ -106,36 +103,39 @@ export default function UnitsPage() {
 
     const type = newPatrol.program === "boy" ? "patrol" : "den";
     
-    const { error } = await supabase.from("patrols").insert({
+    await supabase.from("patrols").insert({
       name: newPatrol.name,
       program: newPatrol.program,
       type,
       is_active: true,
     });
 
-    if (!error) {
-      await loadData();
-      setShowCreateModal(false);
-      setNewPatrol({ name: "", program: "boy" });
-    }
+    await loadData();
+    setShowCreateModal(false);
+    setNewPatrol({ name: "", program: "boy" });
     setSaving(false);
   };
 
   const deletePatrol = async (id: string) => {
-    if (!confirm("Delete this patrol? Scouts will be unassigned.")) return;
+    if (!confirm("Delete this patrol? Scouts will return to unassigned.")) return;
     
+    // Delete patrol assignments (scouts become unassigned)
+    await supabase.from("patrol_assignments").delete().eq("patrol_id", id);
+    // Delete the patrol
     await supabase.from("patrols").delete().eq("id", id);
+    
     if (selectedPatrol?.id === id) {
       setSelectedPatrol(null);
     }
     await loadData();
   };
 
-  const assignYouth = async (youthIds: string[]) => {
-    if (!selectedPatrol) return;
+  // Move youth TO the selected patrol
+  const moveToPatrol = async () => {
+    if (!selectedPatrol || movingYouth.size === 0) return;
     setSaving(true);
 
-    const inserts = youthIds.map((youthId) => ({
+    const inserts = Array.from(movingYouth).map((youthId) => ({
       youth_member_id: youthId,
       patrol_id: selectedPatrol.id,
       role: "member",
@@ -145,18 +145,23 @@ export default function UnitsPage() {
       onConflict: "youth_member_id,patrol_id",
     });
 
+    setMovingYouth(new Set());
     await loadAssignments();
-    setShowAssignModal(false);
     setSaving(false);
   };
 
-  const removeAssignment = async (assignmentId: string) => {
-    await supabase.from("patrol_assignments").delete().eq("id", assignmentId);
+  // Move youth FROM the selected patrol (back to unassigned)
+  const moveToUnassigned = async (assignmentIds: string[]) => {
+    setSaving(true);
+
+    await supabase.from("patrol_assignments").delete().eq("id", assignmentIds[0]);
+    
     await loadAssignments();
+    setSaving(false);
   };
 
+  // Update leadership role
   const updateRole = async (assignmentId: string, role: string) => {
-    // Update patrol_assignments
     await supabase
       .from("patrol_assignments")
       .update({ role })
@@ -166,30 +171,46 @@ export default function UnitsPage() {
     if (role !== "member") {
       const assignment = assignments.find((a) => a.id === assignmentId);
       if (assignment) {
-        await supabase.from("leadership_log").insert({
-          youth_member_id: assignment.youth_member_id,
-          role: role,
-          start_date: new Date().toISOString().split("T")[0],
-          is_active: true,
-        });
+        // Check if already has active leadership
+        const { data: existing } = await supabase
+          .from("leadership_log")
+          .select("id")
+          .eq("youth_member_id", assignment.youth_member_id)
+          .eq("is_active", true)
+          .maybeSingle();
+
+        if (!existing) {
+          await supabase.from("leadership_log").insert({
+            youth_member_id: assignment.youth_member_id,
+            role: role,
+            start_date: new Date().toISOString().split("T")[0],
+            is_active: true,
+          });
+        }
       }
     }
 
     await loadAssignments();
   };
 
-  // Get unassigned youth (not in any patrol)
+  // Get assigned youth IDs
   const assignedYouthIds = assignments.map((a) => a.youth_member_id);
+  
+  // Unassigned youth
   const unassignedYouth = allYouth.filter(
     (y) => !assignedYouthIds.includes(y.id)
   );
 
-  // Filter for search
+  // Filter by search
   const filteredUnassigned = unassignedYouth.filter(
-    (y) =>
-      `${y.first_name} ${y.last_name}`
-        .toLowerCase()
-        .includes(searchQuery.toLowerCase())
+    (y) => `${y.first_name} ${y.last_name}`.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const filteredAssigned = assignments.filter(
+    (a) => {
+      const name = `${a.youth_members.first_name} ${a.youth_members.last_name}`.toLowerCase();
+      return name.includes(searchQuery.toLowerCase());
+    }
   );
 
   if (loading) {
@@ -202,6 +223,7 @@ export default function UnitsPage() {
 
   return (
     <div className="p-6">
+      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 bg-indigo-100 rounded-xl flex items-center justify-center">
@@ -217,24 +239,23 @@ export default function UnitsPage() {
           className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium"
         >
           <Plus className="w-4 h-4" />
-          New Patrol/Den
+          New Unit
         </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Patrol List */}
+      {/* Unit Selector */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         <div className="lg:col-span-1">
           <div className="bg-white rounded-xl border border-slate-200 p-4">
-            <h2 className="font-semibold text-slate-800 mb-4">Patrols & Dens</h2>
+            <h2 className="font-semibold text-slate-800 mb-4">Units</h2>
             
             {patrols.length === 0 ? (
-              <p className="text-slate-500 text-sm">No patrols yet. Create one!</p>
+              <p className="text-slate-500 text-sm">No units yet.</p>
             ) : (
               <div className="space-y-2">
                 {patrols.map((patrol) => (
                   <div
                     key={patrol.id}
-                    onClick={() => setSelectedPatrol(patrol)}
                     className={`p-3 rounded-lg border cursor-pointer transition ${
                       selectedPatrol?.id === patrol.id
                         ? "border-indigo-500 bg-indigo-50"
@@ -242,7 +263,7 @@ export default function UnitsPage() {
                     }`}
                   >
                     <div className="flex items-center justify-between">
-                      <div>
+                      <div onClick={() => setSelectedPatrol(patrol)} className="flex-1">
                         <span className="font-medium text-slate-800">{patrol.name}</span>
                         <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
                           {patrol.program === "boy" ? "Boy Scouts" : "Cub Scouts"}
@@ -253,7 +274,7 @@ export default function UnitsPage() {
                           e.stopPropagation();
                           deletePatrol(patrol.id);
                         }}
-                        className="text-slate-400 hover:text-red-500"
+                        className="text-slate-400 hover:text-red-500 p-1"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -265,8 +286,8 @@ export default function UnitsPage() {
           </div>
         </div>
 
-        {/* Selected Patrol Details */}
-        <div className="lg:col-span-2">
+        {/* Transfer List */}
+        <div className="lg:col-span-3">
           {selectedPatrol ? (
             <div className="bg-white rounded-xl border border-slate-200 p-4">
               <div className="flex items-center justify-between mb-4">
@@ -278,71 +299,125 @@ export default function UnitsPage() {
                     {selectedPatrol.program === "boy" ? "Boy Scout Patrol" : "Cub Scout Den"}
                   </p>
                 </div>
-                <button
-                  onClick={() => setShowAssignModal(true)}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-medium"
-                >
-                  <UserPlus className="w-4 h-4" />
-                  Add Scouts
-                </button>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search..."
+                    className="pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm w-48"
+                  />
+                </div>
               </div>
 
-              {/* Members List */}
-              {assignments.length === 0 ? (
-                <div className="text-center py-8 text-slate-500">
-                  No scouts assigned yet.
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {assignments.map((assignment) => (
-                    <div
-                      key={assignment.id}
-                      className="flex items-center justify-between p-3 bg-slate-50 rounded-lg"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-medium">
-                          {assignment.youth_members.first_name[0]}
-                          {assignment.youth_members.last_name[0]}
-                        </div>
-                        <span className="font-medium text-slate-800">
-                          {assignment.youth_members.first_name} {assignment.youth_members.last_name}
-                        </span>
-                        {assignment.role && assignment.role !== "member" && (
-                          <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
-                            <Crown className="w-3 h-3" />
-                            {assignment.role}
+              {/* Side-by-Side Transfer */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Unassigned Column */}
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-700 mb-2">
+                    Unassigned ({filteredUnassigned.length})
+                  </h3>
+                  <div className="border border-slate-200 rounded-lg h-64 overflow-y-auto">
+                    {filteredUnassigned.length === 0 ? (
+                      <p className="p-4 text-slate-400 text-sm">No unassigned scouts</p>
+                    ) : (
+                      filteredUnassigned.map((youth) => (
+                        <label
+                          key={youth.id}
+                          className={`flex items-center gap-3 p-3 border-b border-slate-100 cursor-pointer hover:bg-slate-50 ${
+                            movingYouth.has(youth.id) ? "bg-indigo-50" : ""
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={movingYouth.has(youth.id)}
+                            onChange={(e) => {
+                              const newSet = new Set(movingYouth);
+                              if (e.target.checked) {
+                                newSet.add(youth.id);
+                              } else {
+                                newSet.delete(youth.id);
+                              }
+                              setMovingYouth(newSet);
+                            }}
+                            className="w-4 h-4 rounded"
+                          />
+                          <span className="text-sm text-slate-800">
+                            {youth.first_name} {youth.last_name}
                           </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <select
-                          value={assignment.role || "member"}
-                          onChange={(e) => updateRole(assignment.id, e.target.value)}
-                          className="text-sm border border-slate-300 rounded px-2 py-1"
-                        >
-                          {LEADERSHIP_ROLES.map((r) => (
-                            <option key={r.value} value={r.value}>
-                              {r.label}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          onClick={() => removeAssignment(assignment.id)}
-                          className="text-slate-400 hover:text-red-500"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                        </label>
+                      ))
+                    )}
+                  </div>
                 </div>
-              )}
+
+                {/* Assigned Column */}
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-700 mb-2">
+                    Unit Members ({filteredAssigned.length})
+                  </h3>
+                  <div className="border border-slate-200 rounded-lg h-64 overflow-y-auto">
+                    {filteredAssigned.length === 0 ? (
+                      <p className="p-4 text-slate-400 text-sm">No members yet</p>
+                    ) : (
+                      filteredAssigned.map((assignment) => (
+                        <div
+                          key={assignment.id}
+                          className="flex items-center justify-between p-3 border-b border-slate-100"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-slate-800">
+                              {assignment.youth_members.first_name} {assignment.youth_members.last_name}
+                            </span>
+                            {assignment.role && assignment.role !== "member" && (
+                              <Crown className="w-3 h-3 text-amber-500" />
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <select
+                              value={assignment.role || "member"}
+                              onChange={(e) => updateRole(assignment.id, e.target.value)}
+                              className="text-xs border border-slate-300 rounded px-2 py-1"
+                            >
+                              {LEADERSHIP_ROLES.map((r) => (
+                                <option key={r.value} value={r.value}>
+                                  {r.label}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={() => moveToUnassigned([assignment.id])}
+                              className="text-slate-400 hover:text-red-500 p-1"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Transfer Buttons */}
+              <div className="flex justify-center gap-4 mt-4">
+                <button
+                  onClick={moveToPatrol}
+                  disabled={movingYouth.size === 0 || saving}
+                  className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium disabled:opacity-50"
+                >
+                  <ArrowRight className="w-4 h-4" />
+                  Add to {selectedPatrol.name}
+                  {movingYouth.size > 0 && ` (${movingYouth.size})`}
+                </button>
+              </div>
             </div>
           ) : (
             <div className="bg-slate-50 rounded-xl border border-slate-200 p-8 text-center">
               <Users className="w-12 h-12 text-slate-300 mx-auto mb-3" />
               <p className="text-slate-500">
-                Select a patrol or den to view and manage members
+                Select a unit to manage members
               </p>
             </div>
           )}
@@ -354,7 +429,7 @@ export default function UnitsPage() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl p-6 w-full max-w-md">
             <h3 className="text-lg font-semibold text-slate-800 mb-4">
-              Create New Patrol/Den
+              Create New Unit
             </h3>
             <div className="space-y-4">
               <div>
@@ -398,63 +473,6 @@ export default function UnitsPage() {
                 {saving ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : "Create"}
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Assign Modal */}
-      {showAssignModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 w-full max-w-md max-h-[80vh] overflow-hidden flex flex-col">
-            <h3 className="text-lg font-semibold text-slate-800 mb-4">
-              Add Scouts to {selectedPatrol?.name}
-            </h3>
-            
-            <div className="relative mb-4">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search scouts..."
-                className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg"
-              />
-            </div>
-
-            <div className="flex-1 overflow-y-auto space-y-2 mb-4">
-              {filteredUnassigned.length === 0 ? (
-                <p className="text-slate-500 text-center py-4">
-                  No unassigned scouts available
-                </p>
-              ) : (
-                filteredUnassigned.map((youth) => (
-                  <label
-                    key={youth.id}
-                    className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg cursor-pointer hover:bg-slate-100"
-                  >
-                    <input
-                      type="checkbox"
-                      className="w-4 h-4 rounded"
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          assignYouth([youth.id]);
-                        }
-                      }}
-                    />
-                    <span className="font-medium text-slate-800">
-                      {youth.first_name} {youth.last_name}
-                    </span>
-                  </label>
-                ))
-              )}
-            </div>
-
-            <button
-              onClick={() => setShowAssignModal(false)}
-              className="w-full px-4 py-2 border border-slate-300 rounded-lg text-slate-700"
-            >
-              Done
-            </button>
           </div>
         </div>
       )}
