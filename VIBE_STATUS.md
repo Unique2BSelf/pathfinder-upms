@@ -26,25 +26,31 @@
 
 ### Block 1: Patrol & Den Management ✅
 - `/dashboard/admin/units`
-- Create/delete patrols & dens
-- Assign youth to units
-- Leadership role assignment (PL, ASPL, Scribe, etc.)
-- Auto-logs to leadership_log
+- Side-by-side transfer list
+- Leadership role toggle (PL, ASPL, Scribe, etc.)
+- Auto-updates leadership_log
+- Automated test: Deleting patrol preserves youth
+
+### Block 2: Rank Completion Intelligence ✅
+- `check_rank_completion()` function
+- `process_rank_completion()` function
+- Updates `youth_members.rank_level` on completion
+- Creates `admin_alerts` on rank complete
+- Toast notification in UI
+- Progress counter per scout
 
 ---
 
 ## Next Step
 
-**Block 2: Digital Approval Workflow (The "Handshake")**
+**Block 3: Digital Approval Workflow (The "Handshake")**
 - Scout/Parent submits requirement as "provisional"
 - Counselor reviews and marks "verified"
-- Rank/badge fully complete → "awarded"
-- Notification system
+- Merit Badge Manager (Digital Blue Cards)
 
 ---
 
 ## Future Blocks (Not Started)
-- Merit Badge Manager (Digital Blue Cards)
 - Service Hours & Camping Logs
 - Attendance from Calendar Integration
 - Duty Roster
